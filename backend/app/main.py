@@ -1,4 +1,5 @@
 import os, uuid, shutil, subprocess, json, asyncio
+import imageio_ffmpeg
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
@@ -15,6 +16,7 @@ STORAGE = Path(os.getenv("STORAGE_DIR", str(BASE / "storage"))).resolve()
 UPLOADS, OUTPUTS = STORAGE / "uploads", STORAGE / "outputs"
 UPLOADS.mkdir(parents=True, exist_ok=True); OUTPUTS.mkdir(parents=True, exist_ok=True)
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{STORAGE / 'yosha.db'}")
+FFMPEG = shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {})
 
 class Project(SQLModel, table=True):
@@ -34,8 +36,10 @@ class Media(SQLModel, table=True):
 SQLModel.metadata.create_all(engine)
 
 app = FastAPI(title="YOSHA AI STUDIO API", version="1.0.0")
-origins = [v.strip() for v in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if v.strip()]
-app.add_middleware(CORSMiddleware, allow_origins=origins or ["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+origins = [v.strip() for v in os.getenv("CORS_ORIGINS", "*").split(",") if v.strip()]
+# This API uses no cookie-based browser sessions. Keep credentials disabled and
+# allow the deployed frontend origin(s) through CORS_ORIGINS when configured.
+app.add_middleware(CORSMiddleware, allow_origins=origins or ["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
 class ProjectIn(BaseModel):
     title: str
@@ -80,7 +84,7 @@ class MergeIn(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status":"ok","service":"YOSHA AI STUDIO","ai_configured":bool(os.getenv("OPENAI_API_KEY"))}
+    return {"status":"ok","service":"YOSHA AI STUDIO","ai_configured":bool(os.getenv("OPENAI_API_KEY")),"kling_configured":bool(os.getenv("KLING_API_KEY")),"ffmpeg_available":bool(FFMPEG)}
 @app.get("/api/projects")
 def projects():
     with Session(engine) as s: return s.exec(select(Project).order_by(Project.id.desc())).all()
@@ -144,7 +148,7 @@ def transcribe_media(media_id:int):
     src=UPLOADS/obj.filename; audio=src; temp=None
     if obj.kind=="video":
         temp=OUTPUTS/f"audio-{uuid.uuid4().hex}.mp3"
-        proc=subprocess.run(["ffmpeg","-y","-i",str(src),"-vn","-acodec","mp3",str(temp)],capture_output=True)
+        proc=subprocess.run([FFMPEG,"-y","-i",str(src),"-vn","-acodec","mp3",str(temp)],capture_output=True)
         if proc.returncode: raise HTTPException(500,proc.stderr.decode(errors="ignore")[-1000:])
         audio=temp
     try: return transcribe(audio)
@@ -165,7 +169,7 @@ def render(data:RenderIn):
     with Session(engine) as s: obj=s.get(Media,data.media_id)
     if not obj or obj.kind!="video": raise HTTPException(400,"Choose an uploaded video")
     src=UPLOADS/obj.filename; name=f"render-{uuid.uuid4().hex}.mp4"; dest=OUTPUTS/name
-    cmd=["ffmpeg","-y","-i",str(src)]
+    cmd=[FFMPEG,"-y","-i",str(src)]
     temp=None
     if data.burn_subtitles and data.subtitle_text.strip():
         temp=OUTPUTS/f"{uuid.uuid4().hex}.srt"; temp.write_text(data.subtitle_text,encoding="utf-8")
@@ -190,7 +194,7 @@ def trim_video(data: TrimIn):
     destination = OUTPUTS / name
     duration = data.end_seconds - data.start_seconds
     proc = subprocess.run([
-        "ffmpeg", "-y", "-ss", str(data.start_seconds), "-i", str(source),
+        FFMPEG, "-y", "-ss", str(data.start_seconds), "-i", str(source),
         "-t", str(duration), "-c:v", "libx264", "-preset", "veryfast",
         "-crf", "20", "-c:a", "aac", "-movflags", "+faststart", str(destination)
     ], capture_output=True)
@@ -211,7 +215,7 @@ def merge_videos(data: MergeIn):
     manifest = OUTPUTS / f"merge-{uuid.uuid4().hex}.txt"
     manifest.write_text("".join(f"file '{(UPLOADS / item.filename).as_posix()}'\n" for item in items), encoding="utf-8")
     proc = subprocess.run([
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(manifest),
+        FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", str(manifest),
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
         "-c:a", "aac", "-movflags", "+faststart", str(destination)
     ], capture_output=True)
@@ -224,7 +228,7 @@ def merge_videos(data: MergeIn):
 def integrations():
     return [
       {"name":"OpenAI","category":"Text / Image / Voice / Transcription","status":"connected" if os.getenv("OPENAI_API_KEY") else "needs_api_key","features":["script","image","voice","transcription"]},
-      {"name":"FFmpeg","category":"Video processing / MP4 export","status":"available","features":["render","burn subtitles","transcode"]},
+      {"name":"FFmpeg","category":"Video processing / MP4 export","status":"available" if FFMPEG else "unavailable","features":["render","burn subtitles","transcode"]},
       {"name":"Kling AI 4.0","category":"Generative video","status":"connected" if os.getenv("KLING_API_KEY") else "needs_api_key","features":["text-to-video","native 3-30 second clips","720p / 1080p / 4K","HDR at 1080p and 4K","long-form 1-4 minute video","automatic clip stitching"],"note":"Long videos are assembled from sequential Kling 4.0 clips. Character and scene continuity is best-effort, not guaranteed."},
       {"name":"ElevenLabs","category":"Voice / dubbing","status":"adapter_required","features":["multilingual dubbing"]}]
 
@@ -302,7 +306,7 @@ async def _process_video_job(job_id: str):
         manifest=OUTPUTS/f"kling-{job_id}.txt"
         manifest.write_text("".join(f"file '{p.as_posix()}'\n" for p in local_files),encoding="utf-8")
         final=OUTPUTS/f"kling-film-{job_id}.mp4"
-        proc=subprocess.run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(manifest),"-c:v","libx264","-preset","veryfast","-crf","20","-c:a","aac","-movflags","+faststart",str(final)],capture_output=True)
+        proc=subprocess.run([FFMPEG,"-y","-f","concat","-safe","0","-i",str(manifest),"-c:v","libx264","-preset","veryfast","-crf","20","-c:a","aac","-movflags","+faststart",str(final)],capture_output=True)
         manifest.unlink(missing_ok=True)
         for p in local_files: p.unlink(missing_ok=True)
         if proc.returncode: raise RuntimeError(proc.stderr.decode(errors="ignore")[-1500:])
