@@ -12,7 +12,7 @@ This repository is an early working foundation, not a finished commercial platfo
 - FFmpeg-based video conversion and SRT subtitle export.
 - Docker Compose for local development.
 
-Not included yet: user accounts, billing, team collaboration, a full multi-track editing timeline, cloud storage, background job queues, and production integrations for third-party video-generation providers such as Runway, Kling or Veo. Those require separate implementation and provider credentials.
+Not included yet: user accounts, billing, team collaboration, a full multi-track editing timeline, cloud storage, background job queues, and automatic long-form multi-scene video assembly. The current Runway integration generates short clips (2–10 seconds per request) and requires provider credentials.
 
 ## Requirements
 
@@ -39,7 +39,8 @@ The API container stores uploaded media and its SQLite database in the persisten
 
 | Variable | Purpose |
 | --- | --- |
-| `OPENAI_API_KEY` | Server-side API key; never expose it in browser code |
+| `OPENAI_API_KEY` | Server-side OpenAI key; never expose it in browser code |
+| `RUNWAYML_API_SECRET` | Runway Dev video-generation key; never expose it in browser code |
 | `OPENAI_TEXT_MODEL` | Text model used for scripts |
 | `OPENAI_IMAGE_MODEL` | Image generation model |
 | `OPENAI_TTS_MODEL` | Speech generation model |
@@ -56,6 +57,8 @@ The API container stores uploaded media and its SQLite database in the persisten
 - `POST /api/media/upload`
 - `POST /api/ai/script`
 - `POST /api/ai/image`
+- `POST /api/ai/video` (starts a short text-to-video generation task)
+- `GET /api/ai/video/{task_id}` (checks generation status and returns the output URL when ready)
 - `POST /api/ai/voice`
 - `POST /api/ai/transcribe/{media_id}`
 - `POST /api/export/srt`
