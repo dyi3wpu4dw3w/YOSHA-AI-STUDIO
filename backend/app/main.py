@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 from sqlmodel import SQLModel, Field, Session, create_engine, select
 from .services.ai import generate_script, generate_image, generate_speech, transcribe
+from .services.video import create_video, get_video_task
 
 BASE = Path(__file__).resolve().parents[1]
 STORAGE = Path(os.getenv("STORAGE_DIR", str(BASE / "storage"))).resolve()
@@ -48,6 +49,11 @@ class TextIn(BaseModel):
     voice: str = "alloy"
 class ImageIn(BaseModel):
     prompt: str
+class VideoIn(BaseModel):
+    prompt: str
+    duration: int = 5
+    ratio: str = "1280:720"
+    model: str = "gen4.5"
 class RenderIn(BaseModel):
     media_id: int
     subtitle_text: str = ""
@@ -157,3 +163,28 @@ def integrations():
       {"name":"FFmpeg","category":"Video processing / MP4 export","status":"available","features":["render","burn subtitles","transcode"]},
       {"name":"Runway / Kling / Veo","category":"Generative video","status":"adapter_required","features":["text-to-video","image-to-video"],"note":"Provider credentials and official API adapter required."},
       {"name":"ElevenLabs","category":"Voice / dubbing","status":"adapter_required","features":["multilingual dubbing"]}]
+
+
+@app.post("/api/ai/video")
+async def ai_video(data: VideoIn):
+    if not data.prompt.strip(): raise HTTPException(400, "Video prompt is required")
+    if len(data.prompt) > 1000: raise HTTPException(400, "Prompt must be 1000 characters or fewer")
+    if data.duration < 2 or data.duration > 10: raise HTTPException(400, "Duration must be between 2 and 10 seconds")
+    if data.ratio not in ("1280:720", "720:1280"): raise HTTPException(400, "Unsupported aspect ratio")
+    try:
+        task = await create_video(data.prompt.strip(), data.duration, data.ratio, data.model)
+        return {"task_id": task.get("id"), "status": task.get("status", "PENDING"), "estimated_cost": task.get("estimatedCost")}
+    except Exception as e: raise HTTPException(502, str(e))
+
+@app.get("/api/ai/video/{task_id}")
+async def ai_video_status(task_id: str):
+    try:
+        task = await get_video_task(task_id)
+        status = task.get("status", "UNKNOWN")
+        output = task.get("output")
+        result = {"task_id": task_id, "status": status}
+        if task.get("failure"): result["failure"] = task.get("failure")
+        if status == "SUCCEEDED" and output:
+            result["video_url"] = output[0] if isinstance(output, list) else output
+        return result
+    except Exception as e: raise HTTPException(502, str(e))
