@@ -9,6 +9,7 @@ This repository is an early working foundation, not a finished commercial platfo
 - FastAPI backend and SQLite persistence for projects and media metadata.
 - Media upload and local media library.
 - OpenAI adapters for script generation, image generation, speech generation and audio transcription.
+- Runway Dev text-to-video adapter with task creation, status polling and generated-video preview (requires a funded Runway API project).
 - FFmpeg-based video conversion and SRT subtitle export.
 - Docker Compose for local development.
 
