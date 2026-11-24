@@ -9,11 +9,11 @@ This repository is an early working foundation, not a finished commercial platfo
 - FastAPI backend and SQLite persistence for projects and media metadata.
 - Media upload and local media library.
 - OpenAI adapters for script generation, image generation, speech generation and audio transcription.
-- Runway Dev text-to-video adapter with task creation, status polling and generated-video preview (requires a funded Runway API project).
+- Kling AI 4.0 text-to-video integration with multi-clip generation, status polling, download and FFmpeg stitching (requires a funded Kling API account).
 - FFmpeg-based video conversion and SRT subtitle export.
 - Docker Compose for local development.
 
-Not included yet: user accounts, billing, team collaboration, a full multi-track editing timeline, cloud storage, background job queues, and automatic long-form multi-scene video assembly. The current Runway integration generates short clips (2–10 seconds per request) and requires provider credentials.
+Not included yet: user accounts, billing, team collaboration, a full multi-track editing timeline, cloud storage, background job queues, and automatic long-form multi-scene video assembly. Kling 4.0 generates up to 30 seconds per request. The long-form workflow splits a 1–4 minute request into multiple clips, then downloads and stitches them with FFmpeg. Continuity between separately generated clips is best-effort, not guaranteed. Kling API credentials and credits are required.
 
 ## Requirements
 
@@ -41,7 +41,8 @@ The API container stores uploaded media and its SQLite database in the persisten
 | Variable | Purpose |
 | --- | --- |
 | `OPENAI_API_KEY` | Server-side OpenAI key; never expose it in browser code |
-| `RUNWAYML_API_SECRET` | Runway Dev video-generation key; never expose it in browser code |
+| `KLING_API_KEY` | Kling AI API key; never expose it in browser code |
+| `KLING_API_BASE_URL` | Kling API region base URL |
 | `OPENAI_TEXT_MODEL` | Text model used for scripts |
 | `OPENAI_IMAGE_MODEL` | Image generation model |
 | `OPENAI_TTS_MODEL` | Speech generation model |
@@ -58,8 +59,8 @@ The API container stores uploaded media and its SQLite database in the persisten
 - `POST /api/media/upload`
 - `POST /api/ai/script`
 - `POST /api/ai/image`
-- `POST /api/ai/video` (starts a short text-to-video generation task)
-- `GET /api/ai/video/{task_id}` (checks generation status and returns the output URL when ready)
+- `POST /api/ai/video` (starts a 1–4 minute Kling film job)
+- `GET /api/ai/video/{job_id}` (checks clip tasks, downloads and stitches the finished film)
 - `POST /api/ai/voice`
 - `POST /api/ai/transcribe/{media_id}`
 - `POST /api/export/srt`
