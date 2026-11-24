@@ -1,0 +1,24 @@
+services:
+  api:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: sqlite:////app/storage/yosha.db
+      STORAGE_DIR: /app/storage
+      CORS_ORIGINS: http://localhost:3000
+    volumes:
+      - yosha_storage:/app/storage
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+  studio:
+    build: ./frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+volumes:
+  yosha_storage:
