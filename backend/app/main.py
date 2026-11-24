@@ -1,4 +1,4 @@
-import os, uuid, shutil, subprocess, json
+import os, uuid, shutil, subprocess, json, asyncio
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
@@ -53,6 +53,8 @@ class VideoIn(BaseModel):
     prompt: str
     duration: int = 60
     ratio: str = "16:9"
+    resolution: str = "1080p"
+    dynamic_range: str = "sdr"
 class VideoJob(SQLModel, table=True):
     id: str = Field(primary_key=True)
     prompt: str
@@ -64,6 +66,7 @@ class VideoJob(SQLModel, table=True):
     error: str = ""
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 SQLModel.metadata.create_all(engine)
+video_job_locks: dict[str, asyncio.Lock] = {}
 class RenderIn(BaseModel):
     media_id: int
     subtitle_text: str = ""
@@ -171,7 +174,7 @@ def integrations():
     return [
       {"name":"OpenAI","category":"Text / Image / Voice / Transcription","status":"connected" if os.getenv("OPENAI_API_KEY") else "needs_api_key","features":["script","image","voice","transcription"]},
       {"name":"FFmpeg","category":"Video processing / MP4 export","status":"available","features":["render","burn subtitles","transcode"]},
-      {"name":"Kling AI 4.0","category":"Generative video","status":"connected" if os.getenv("KLING_API_KEY") else "needs_api_key","features":["text-to-video","long-form 1-4 minute video","automatic clip stitching"],"note":"Kling 4.0 creates up to 30 seconds per task; long videos are assembled from multiple generated clips."},
+      {"name":"Kling AI 4.0","category":"Generative video","status":"connected" if os.getenv("KLING_API_KEY") else "needs_api_key","features":["text-to-video","native 3-30 second clips","720p / 1080p / 4K","HDR at 1080p and 4K","long-form 1-4 minute video","automatic clip stitching"],"note":"Long videos are assembled from sequential Kling 4.0 clips. Character and scene continuity is best-effort, not guaranteed."},
       {"name":"ElevenLabs","category":"Voice / dubbing","status":"adapter_required","features":["multilingual dubbing"]}]
 
 
@@ -182,6 +185,8 @@ async def ai_video(data: VideoIn):
     try: durations = split_duration(data.duration)
     except ValueError as e: raise HTTPException(400, str(e))
     if data.ratio not in ("16:9", "9:16", "1:1", "21:9", "4:3", "3:4"): raise HTTPException(400, "Unsupported aspect ratio")
+    if data.resolution not in ("720p", "1080p", "4k"): raise HTTPException(400, "Unsupported resolution")
+    if data.dynamic_range not in ("sdr", "hdr") or (data.dynamic_range == "hdr" and data.resolution == "720p"): raise HTTPException(400, "HDR requires 1080p or 4K resolution")
     job_id = uuid.uuid4().hex
     task_rows = []
     try:
@@ -192,17 +197,30 @@ async def ai_video(data: VideoIn):
                 + ("Establish the story and characters." if index == 0 else "Continue the same story naturally from the preceding segment; do not restart or introduce unrelated characters.")
                 + (" Bring the story to a satisfying conclusion." if index == len(durations)-1 else " End with a visual action that can flow naturally into the next segment.")
             )
-            task = await create_clip(data.prompt.strip() + continuity, seconds, data.ratio)
+            task = await create_clip(data.prompt.strip() + continuity, seconds, data.ratio, data.resolution, data.dynamic_range)
             task_rows.append({"id": task["id"], "duration": seconds, "status": task.get("status", "submitted")})
         with Session(engine) as s:
             s.add(VideoJob(id=job_id, prompt=data.prompt.strip(), duration=data.duration, ratio=data.ratio, segment_tasks=json.dumps(task_rows)))
             s.commit()
-        return {"job_id": job_id, "status": "submitted", "segments": len(task_rows), "segment_durations": durations}
+        return {"job_id": job_id, "status": "submitted", "segments": len(task_rows), "segment_durations": durations, "resolution": data.resolution, "dynamic_range": data.dynamic_range}
     except Exception as e:
         raise HTTPException(502, str(e))
 
 @app.get("/api/ai/video/{job_id}")
 async def ai_video_status(job_id: str):
+    with Session(engine) as s: job = s.get(VideoJob, job_id)
+    if not job: raise HTTPException(404, "Video job not found")
+    if job.output_url:
+        return {"job_id": job_id, "status": "succeeded", "video_url": job.output_url, "duration": job.duration}
+    if job.error:
+        return {"job_id": job_id, "status": "failed", "error": job.error}
+    lock = video_job_locks.setdefault(job_id, asyncio.Lock())
+    if lock.locked():
+        return {"job_id": job_id, "status": "processing", "message": "Video assembly is already running."}
+    async with lock:
+        return await _process_video_job(job_id)
+
+async def _process_video_job(job_id: str):
     with Session(engine) as s: job = s.get(VideoJob, job_id)
     if not job: raise HTTPException(404, "Video job not found")
     if job.output_url:
