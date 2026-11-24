@@ -71,6 +71,12 @@ class RenderIn(BaseModel):
     media_id: int
     subtitle_text: str = ""
     burn_subtitles: bool = False
+class TrimIn(BaseModel):
+    media_id: int
+    start_seconds: float
+    end_seconds: float
+class MergeIn(BaseModel):
+    media_ids: list[int]
 
 @app.get("/health")
 def health():
@@ -169,6 +175,51 @@ def render(data:RenderIn):
     if temp and temp.exists(): temp.unlink()
     if proc.returncode: raise HTTPException(500,proc.stderr.decode(errors="ignore")[-1800:])
     return {"filename":name,"url":f"/outputs/{name}"}
+
+
+@app.post("/api/edit/trim")
+def trim_video(data: TrimIn):
+    if data.start_seconds < 0 or data.end_seconds <= data.start_seconds:
+        raise HTTPException(400, "حدد بداية ونهاية صحيحتين للمقطع")
+    with Session(engine) as s:
+        media_obj = s.get(Media, data.media_id)
+    if not media_obj or media_obj.kind != "video":
+        raise HTTPException(400, "اختر ملف فيديو من المكتبة")
+    source = UPLOADS / media_obj.filename
+    name = f"trim-{uuid.uuid4().hex}.mp4"
+    destination = OUTPUTS / name
+    duration = data.end_seconds - data.start_seconds
+    proc = subprocess.run([
+        "ffmpeg", "-y", "-ss", str(data.start_seconds), "-i", str(source),
+        "-t", str(duration), "-c:v", "libx264", "-preset", "veryfast",
+        "-crf", "20", "-c:a", "aac", "-movflags", "+faststart", str(destination)
+    ], capture_output=True)
+    if proc.returncode:
+        raise HTTPException(500, proc.stderr.decode(errors="ignore")[-1500:])
+    return {"filename": name, "url": f"/outputs/{name}", "duration": duration}
+
+@app.post("/api/edit/merge")
+def merge_videos(data: MergeIn):
+    if len(data.media_ids) < 2 or len(data.media_ids) > 20:
+        raise HTTPException(400, "اختر من مقطعين إلى 20 مقطعاً")
+    with Session(engine) as s:
+        items = [s.get(Media, media_id) for media_id in data.media_ids]
+    if any(item is None or item.kind != "video" for item in items):
+        raise HTTPException(400, "كل الملفات المختارة يجب أن تكون فيديوهات")
+    name = f"merge-{uuid.uuid4().hex}.mp4"
+    destination = OUTPUTS / name
+    manifest = OUTPUTS / f"merge-{uuid.uuid4().hex}.txt"
+    manifest.write_text("".join(f"file '{(UPLOADS / item.filename).as_posix()}'\\n" for item in items), encoding="utf-8")
+    proc = subprocess.run([
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(manifest),
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-c:a", "aac", "-movflags", "+faststart", str(destination)
+    ], capture_output=True)
+    manifest.unlink(missing_ok=True)
+    if proc.returncode:
+        raise HTTPException(500, proc.stderr.decode(errors="ignore")[-1500:])
+    return {"filename": name, "url": f"/outputs/{name}", "clips": len(items)}
+
 @app.get("/api/integrations")
 def integrations():
     return [
