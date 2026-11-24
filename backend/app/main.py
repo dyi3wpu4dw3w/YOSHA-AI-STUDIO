@@ -171,7 +171,7 @@ def integrations():
     return [
       {"name":"OpenAI","category":"Text / Image / Voice / Transcription","status":"connected" if os.getenv("OPENAI_API_KEY") else "needs_api_key","features":["script","image","voice","transcription"]},
       {"name":"FFmpeg","category":"Video processing / MP4 export","status":"available","features":["render","burn subtitles","transcode"]},
-      {"name":"Runway / Kling / Veo","category":"Generative video","status":"adapter_required","features":["text-to-video","image-to-video"],"note":"Provider credentials and official API adapter required."},
+      {"name":"Kling AI 4.0","category":"Generative video","status":"connected" if os.getenv("KLING_API_KEY") else "needs_api_key","features":["text-to-video","long-form 1-4 minute video","automatic clip stitching"],"note":"Kling 4.0 creates up to 30 seconds per task; long videos are assembled from multiple generated clips."},
       {"name":"ElevenLabs","category":"Voice / dubbing","status":"adapter_required","features":["multilingual dubbing"]}]
 
 
