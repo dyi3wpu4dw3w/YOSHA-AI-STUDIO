@@ -3,3 +3,5 @@
 .video-options{display:flex;gap:14px;flex-wrap:wrap;margin:14px 0}
 .video-options label{display:grid;gap:7px;color:#cbd5e1}
 .video-options select{background:#111827;color:#fff;border:1px solid #334155;border-radius:10px;padding:10px}
+
+.pick{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#0a1220;border:1px solid #2c3b53;border-radius:9px;color:#cbd5e1;cursor:pointer}.pick input{width:auto;margin:0}.panel hr{border:0;border-top:1px solid #29384f;margin:26px 0}.panel h3{color:#e8c477;margin:18px 0 10px}.panel a{display:inline-block;margin:12px;color:#e8c477}
