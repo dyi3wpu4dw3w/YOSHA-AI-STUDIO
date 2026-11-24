@@ -1,4 +1,4 @@
-import os, uuid, shutil, subprocess
+import os, uuid, shutil, subprocess, json
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 from sqlmodel import SQLModel, Field, Session, create_engine, select
 from .services.ai import generate_script, generate_image, generate_speech, transcribe
-from .services.video import create_video, get_video_task
+from .services.video import create_clip, get_clip, download_clip, split_duration
 
 BASE = Path(__file__).resolve().parents[1]
 STORAGE = Path(os.getenv("STORAGE_DIR", str(BASE / "storage"))).resolve()
@@ -51,9 +51,18 @@ class ImageIn(BaseModel):
     prompt: str
 class VideoIn(BaseModel):
     prompt: str
-    duration: int = 5
-    ratio: str = "1280:720"
-    model: str = "gen4.5"
+    duration: int = 60
+    ratio: str = "16:9"
+class VideoJob(SQLModel, table=True):
+    id: str = Field(primary_key=True)
+    prompt: str
+    duration: int
+    ratio: str
+    segment_tasks: str = "[]"
+    status: str = "submitted"
+    output_url: str = ""
+    error: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 class RenderIn(BaseModel):
     media_id: int
     subtitle_text: str = ""
@@ -168,23 +177,70 @@ def integrations():
 @app.post("/api/ai/video")
 async def ai_video(data: VideoIn):
     if not data.prompt.strip(): raise HTTPException(400, "Video prompt is required")
-    if len(data.prompt) > 1000: raise HTTPException(400, "Prompt must be 1000 characters or fewer")
-    if data.duration < 2 or data.duration > 10: raise HTTPException(400, "Duration must be between 2 and 10 seconds")
-    if data.ratio not in ("1280:720", "720:1280"): raise HTTPException(400, "Unsupported aspect ratio")
+    if len(data.prompt) > 7000: raise HTTPException(400, "Prompt must be 7000 characters or fewer")
+    try: durations = split_duration(data.duration)
+    except ValueError as e: raise HTTPException(400, str(e))
+    if data.ratio not in ("16:9", "9:16", "1:1", "21:9", "4:3", "3:4"): raise HTTPException(400, "Unsupported aspect ratio")
+    job_id = uuid.uuid4().hex
+    task_rows = []
     try:
-        task = await create_video(data.prompt.strip(), data.duration, data.ratio, data.model)
-        return {"task_id": task.get("id"), "status": task.get("status", "PENDING"), "estimated_cost": task.get("estimatedCost")}
-    except Exception as e: raise HTTPException(502, str(e))
+        for index, seconds in enumerate(durations):
+            continuity = (
+                f"\n\nThis is continuous long-form film segment {index + 1} of {len(durations)}, lasting {seconds} seconds. "
+                "Keep the same characters, wardrobe, locations, visual style, lighting logic and cinematic language throughout the whole film. "
+                + ("Establish the story and characters." if index == 0 else "Continue the same story naturally from the preceding segment; do not restart or introduce unrelated characters.")
+                + (" Bring the story to a satisfying conclusion." if index == len(durations)-1 else " End with a visual action that can flow naturally into the next segment.")
+            )
+            task = await create_clip(data.prompt.strip() + continuity, seconds, data.ratio)
+            task_rows.append({"id": task["id"], "duration": seconds, "status": task.get("status", "submitted")})
+        with Session(engine) as s:
+            s.add(VideoJob(id=job_id, prompt=data.prompt.strip(), duration=data.duration, ratio=data.ratio, segment_tasks=json.dumps(task_rows)))
+            s.commit()
+        return {"job_id": job_id, "status": "submitted", "segments": len(task_rows), "segment_durations": durations}
+    except Exception as e:
+        raise HTTPException(502, str(e))
 
-@app.get("/api/ai/video/{task_id}")
-async def ai_video_status(task_id: str):
+@app.get("/api/ai/video/{job_id}")
+async def ai_video_status(job_id: str):
+    with Session(engine) as s: job = s.get(VideoJob, job_id)
+    if not job: raise HTTPException(404, "Video job not found")
+    if job.output_url:
+        return {"job_id": job_id, "status": "succeeded", "video_url": job.output_url, "duration": job.duration}
+    if job.error:
+        return {"job_id": job_id, "status": "failed", "error": job.error}
+    rows = json.loads(job.segment_tasks)
     try:
-        task = await get_video_task(task_id)
-        status = task.get("status", "UNKNOWN")
-        output = task.get("output")
-        result = {"task_id": task_id, "status": status}
-        if task.get("failure"): result["failure"] = task.get("failure")
-        if status == "SUCCEEDED" and output:
-            result["video_url"] = output[0] if isinstance(output, list) else output
-        return result
-    except Exception as e: raise HTTPException(502, str(e))
+        for row in rows:
+            task = await get_clip(row["id"])
+            row["status"] = task.get("status", "unknown")
+            if row["status"] == "failed":
+                message = task.get("message") or task.get("error") or "Kling clip generation failed"
+                with Session(engine) as s:
+                    current=s.get(VideoJob,job_id); current.error=str(message); current.status="failed"; current.segment_tasks=json.dumps(rows); s.add(current); s.commit()
+                return {"job_id":job_id,"status":"failed","error":str(message),"segments":rows}
+            outputs = task.get("outputs") or []
+            if row["status"] == "succeeded" and outputs:
+                row["url"] = outputs[0].get("url")
+        with Session(engine) as s:
+            current=s.get(VideoJob,job_id); current.segment_tasks=json.dumps(rows); current.status="processing"; s.add(current); s.commit()
+        if not all(row["status"] == "succeeded" and row.get("url") for row in rows):
+            return {"job_id":job_id,"status":"processing","segments":rows,"completed_segments":sum(1 for x in rows if x["status"]=="succeeded"),"total_segments":len(rows)}
+        local_files=[]
+        for i,row in enumerate(rows):
+            path=OUTPUTS/f"kling-{job_id}-{i:02}.mp4"
+            await download_clip(row["url"], str(path)); local_files.append(path)
+        manifest=OUTPUTS/f"kling-{job_id}.txt"
+        manifest.write_text("".join(f"file '{p.as_posix()}'\n" for p in local_files),encoding="utf-8")
+        final=OUTPUTS/f"kling-film-{job_id}.mp4"
+        proc=subprocess.run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(manifest),"-c:v","libx264","-preset","veryfast","-crf","20","-c:a","aac","-movflags","+faststart",str(final)],capture_output=True)
+        manifest.unlink(missing_ok=True)
+        for p in local_files: p.unlink(missing_ok=True)
+        if proc.returncode: raise RuntimeError(proc.stderr.decode(errors="ignore")[-1500:])
+        url=f"/outputs/{final.name}"
+        with Session(engine) as s:
+            current=s.get(VideoJob,job_id); current.output_url=url; current.status="succeeded"; current.segment_tasks=json.dumps(rows); s.add(current); s.commit()
+        return {"job_id":job_id,"status":"succeeded","video_url":url,"duration":job.duration,"segments":rows}
+    except Exception as e:
+        with Session(engine) as s:
+            current=s.get(VideoJob,job_id); current.error=str(e); current.status="failed"; s.add(current); s.commit()
+        raise HTTPException(502, str(e))
