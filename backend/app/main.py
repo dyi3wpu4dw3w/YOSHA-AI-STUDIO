@@ -63,6 +63,7 @@ class VideoJob(SQLModel, table=True):
     output_url: str = ""
     error: str = ""
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+SQLModel.metadata.create_all(engine)
 class RenderIn(BaseModel):
     media_id: int
     subtitle_text: str = ""
