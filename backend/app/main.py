@@ -209,7 +209,7 @@ def merge_videos(data: MergeIn):
     name = f"merge-{uuid.uuid4().hex}.mp4"
     destination = OUTPUTS / name
     manifest = OUTPUTS / f"merge-{uuid.uuid4().hex}.txt"
-    manifest.write_text("".join(f"file '{(UPLOADS / item.filename).as_posix()}'\\n" for item in items), encoding="utf-8")
+    manifest.write_text("".join(f"file '{(UPLOADS / item.filename).as_posix()}'\n" for item in items), encoding="utf-8")
     proc = subprocess.run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(manifest),
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
