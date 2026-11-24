@@ -1,6 +1,6 @@
 "use client";
 import {useEffect,useState} from "react";
-const API=process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000";
+const API=(process.env.NEXT_PUBLIC_API_URL||"https://yosha-ai-studio.onrender.com").replace(/\/$/,"");
 type Project={id:number;title:string;description:string;status:string};
 type Media={id:number;filename:string;original_name:string;kind:string;url:string};
 export default function Home(){
