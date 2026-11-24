@@ -69,6 +69,32 @@ The API container stores uploaded media and its SQLite database in the persisten
 - `POST /api/render`
 - `GET /api/integrations`
 
+## Deploy on Render
+
+The repository contains separate backend and frontend services.
+
+### Backend (already deployed)
+
+- Root Directory: `backend`
+- Build Command: `pip install -r requirements.txt`
+- Start Command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Runtime: Python 3.11 (set `PYTHON_VERSION=3.11.11`)
+- Required environment variables: `OPENAI_API_KEY`, `KLING_API_KEY`, and optionally `KLING_API_BASE_URL`.
+- Health check: `/health`
+
+The backend includes the FFmpeg executable through `imageio-ffmpeg`, so trim, merge, audio extraction and video stitching do not depend on an OS-level FFmpeg installation.
+
+### Frontend (create as a separate Render Web Service)
+
+- Root Directory: `frontend`
+- Build Command: `npm install && npm run build`
+- Start Command: `npm start`
+- Environment variable: `NEXT_PUBLIC_API_URL=https://yosha-ai-studio.onrender.com`
+
+After the frontend is deployed, set the backend's `CORS_ORIGINS` to the exact frontend URL if you want to restrict browser access to that origin. If omitted, the API permits cross-origin requests and does not enable credentialed cookies.
+
+Important: Render's default filesystem is ephemeral. Uploaded media, generated files and the SQLite database can be lost when the service restarts or redeploys. Persistent production storage requires a persistent disk or an external database/object-storage integration; Supabase is not wired into this release yet.
+
 ## Security and deployment notes
 
 This MVP is intended for local evaluation and controlled development. It currently has no authentication, authorization, rate limiting, malware scanning, or per-user storage isolation. Do not expose it publicly with private media or production credentials until those controls, HTTPS, backups, and deployment-specific CORS settings are implemented and tested.
