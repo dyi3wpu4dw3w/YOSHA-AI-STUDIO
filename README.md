@@ -9,11 +9,12 @@ This repository is an early working foundation, not a finished commercial platfo
 - FastAPI backend and SQLite persistence for projects and media metadata.
 - Media upload and local media library.
 - OpenAI adapters for script generation, image generation, speech generation and audio transcription.
-- Kling AI 4.0 text-to-video integration with multi-clip generation, status polling, download and FFmpeg stitching (requires a funded Kling API account).
-- FFmpeg-based video conversion and SRT subtitle export.
+- Kling AI 4.0 text-to-video integration with native 3–30 second clip tasks, selectable 720p/1080p/4K, HDR where supported, status polling, downloads and FFmpeg stitching into 1–4 minute MP4 films (requires a funded Kling API account).
+- Basic FFmpeg editor actions: trim one uploaded video, merge 2–20 uploaded videos, transcode MP4 and burn subtitles.
+- Audio/video transcription with timestamped segments and SRT subtitle export.
 - Docker Compose for local development.
 
-Not included yet: user accounts, billing, team collaboration, a full multi-track editing timeline, cloud storage, background job queues, and automatic long-form multi-scene video assembly. Kling 4.0 generates up to 30 seconds per request. The long-form workflow splits a 1–4 minute request into multiple clips, then downloads and stitches them with FFmpeg. Continuity between separately generated clips is best-effort, not guaranteed. Kling API credentials and credits are required.
+Not included yet: user accounts, billing, team collaboration, a professional multi-track timeline with transitions/keyframes, cloud object storage, background job queues, image/video/voice reference upload to Kling Omni, and robust cross-clip character continuity. Kling 4.0 generates 3–30 seconds per request. The long-form workflow splits a 1–4 minute request into multiple clips, then downloads and stitches them with FFmpeg. Continuity between separately generated clips is best-effort, not guaranteed. Kling API credentials and credits are required.
 
 ## Requirements
 
@@ -43,6 +44,7 @@ The API container stores uploaded media and its SQLite database in the persisten
 | `OPENAI_API_KEY` | Server-side OpenAI key; never expose it in browser code |
 | `KLING_API_KEY` | Kling AI API key; never expose it in browser code |
 | `KLING_API_BASE_URL` | Kling API region base URL |
+| Kling output | Select 720p, 1080p or 4K; HDR is available at 1080p/4K where the account/model supports it |
 | `OPENAI_TEXT_MODEL` | Text model used for scripts |
 | `OPENAI_IMAGE_MODEL` | Image generation model |
 | `OPENAI_TTS_MODEL` | Speech generation model |
